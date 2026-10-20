@@ -2,6 +2,7 @@
 <html lang="vi">
     <head>
         <meta charset="utf-8" />
+        <meta name="referrer" content="no-referrer" />
         <meta
             name="viewport"
             content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
@@ -834,7 +835,7 @@
                 a: "刘兆宇，阿YueYue",
                 py: "dong mian liu zhao yu a yueyue",
                 d: 191,
-                src: "https://files.catbox.moe/cqidyp.mp3", // ví dụ: "https://example.com/dongmian.mp3"
+                src: ["audio/dongmian.mp3", "https://files.catbox.moe/cqidyp.mp3"], // thử lần lượt từ trái sang phải; có thể là 1 chuỗi hoặc 1 mảng
                 img: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcShxZps3m4DolGPnlKzM8skVefxhaumNsfzk2B14481ng&s=10", // ví dụ: "https://example.com/cover.jpg"
                 c: ["rgba(200,170,230,.55)", "rgba(160,180,230,.5)", "rgba(220,170,200,.45)", "rgba(180,160,220,.4)"],
                 w: "rgba(140,120,180,.45)",
@@ -980,6 +981,25 @@
             var mode = "", tab = "all", vt = "cur", vp = 0, vi = 0, tt = null;
             var hm = "m", hq = "", creating = false;
             var useAudio = false;
+            var srcTry = [], srcIdx = 0;
+
+            // src có thể là chuỗi hoặc mảng nhiều link dự phòng
+            function srcList(tr) {
+              var s = tr.src;
+              if (!s) return [];
+              if (!Array.isArray(s)) s = [s];
+              return s.filter(function (u) { return u && String(u).trim(); });
+            }
+            // Đặt currentTime an toàn (Safari cũ ném lỗi nếu chưa tải metadata)
+            function setT(t) {
+              try { audio.currentTime = t; } catch (e) {}
+            }
+            function loadSrc(k) {
+              srcIdx = k;
+              audio.preload = "auto";
+              audio.src = srcTry[k];
+              audio.load();
+            }
 
             var $ = function (id) { return document.getElementById(id); };
             var audio = $("audio");
@@ -1226,7 +1246,9 @@
               i = (n + tracks.length) % tracks.length;
               pos = 0;
               var tr = tracks[i];
-              useAudio = !!(tr.src && tr.src.trim());
+              srcTry = srcList(tr);
+              srcIdx = 0;
+              useAudio = srcTry.length > 0;
 
               setCover(tr);
               $("title").textContent = tr.t;
@@ -1235,8 +1257,7 @@
               document.title = tr.t + " – " + tr.a;
 
               if (useAudio) {
-                audio.src = tr.src;
-                audio.load();
+                loadSrc(0);
                 audio.onloadedmetadata = function () {
                   if (isFinite(audio.duration)) {
                     $("dur").textContent = fmt(audio.duration);
@@ -1285,10 +1306,14 @@
 
               if (v) {
                 if (useAudio) {
-                  audio.currentTime = pos;
+                  if (audio.error) loadSrc(0); // lần trước lỗi → thử tải lại từ đầu
+                  if (pos > 0) setT(pos);
                   var p = audio.play();
-                  if (p && p.catch) p.catch(function () {
-                    toast("Không phát được audio (cần URL hợp lệ)");
+                  if (p && p.catch) p.catch(function (err) {
+                    // AbortError = play() bị ngắt do đổi bài/đổi nguồn → bình thường, bỏ qua
+                    if (err && err.name === "AbortError") return;
+                    if (err && err.name === "NotAllowedError") toast("Trình duyệt chặn phát – hãy bấm Play lần nữa");
+                    else toast("Không phát được nhạc – kiểm tra link/file mp3");
                     setPlaying(false, true);
                   });
                   startSmoothPaint();
@@ -1342,7 +1367,7 @@
                 load(v.t, 1);
               }
               pos = v.p;
-              if (useAudio) audio.currentTime = pos;
+              if (useAudio) setT(pos);
               paint();
               setPlaying(true);
               openPlayer();
@@ -1355,10 +1380,19 @@
               if (useAudio && playing) pos = audio.currentTime;
             });
             audio.addEventListener("error", function () {
-              if (useAudio && tracks[i].src) {
-                toast("Lỗi tải audio – dùng chế độ demo");
-                useAudio = false;
+              if (!useAudio || !srcTry.length) return;
+              if (srcIdx + 1 < srcTry.length) {
+                // nguồn hiện tại lỗi → thử link dự phòng tiếp theo
+                loadSrc(srcIdx + 1);
+                if (playing) {
+                  var p = audio.play();
+                  if (p && p.catch) p.catch(function () {});
+                }
+                return;
               }
+              var code = audio.error ? audio.error.code : "?";
+              toast("Không tải được nhạc (lỗi " + code + ") – kiểm tra link/file mp3");
+              if (playing) setPlaying(false, true);
             });
 
             // ========== HOME ==========
@@ -1847,7 +1881,7 @@
               var tr = tracks[i];
               var dur = useAudio && audio.duration && isFinite(audio.duration) ? audio.duration : tr.d;
               pos = f * dur;
-              if (useAudio) audio.currentTime = pos;
+              if (useAudio) setT(pos);
               paint();
             }
             var drag = false;
@@ -1867,7 +1901,7 @@
             $("prev").onclick = function () {
               if (pos > 3) {
                 pos = 0;
-                if (useAudio) audio.currentTime = 0;
+                if (useAudio) setT(0);
                 paint();
               } else step(-1);
             };
